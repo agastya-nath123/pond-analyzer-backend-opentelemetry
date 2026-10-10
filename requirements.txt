@@ -1,0 +1,15 @@
+# Tested together with Python 3.12.3
+fastapi==0.141.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+numpy==2.4.4
+scipy==1.17.1
+pyproj==3.8.0
+numba==0.67.0
+defusedxml==0.7.1
+
+# Telemetry (traces and metrics); off unless configured, see README
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-fastapi==0.66b1
