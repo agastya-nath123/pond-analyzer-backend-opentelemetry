@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import (
     APIRouter,
@@ -17,7 +18,7 @@ from app.services.contour_analyzer import (
     find_catchment
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("pond.backend.api")
 
 router = APIRouter()
 
@@ -71,14 +72,12 @@ def _read_upload(contour_map: UploadFile) -> bytes:
     return data
 
 
-def _error_response(error: Exception) -> HTTPException:
-    if isinstance(error, MapTooLargeError):
-        return HTTPException(status_code=413, detail=str(error))
-    if isinstance(error, ContourMapError):
-        return HTTPException(status_code=400, detail=str(error))
-    if isinstance(error, PondNotFoundError):
-        return HTTPException(status_code=404, detail=str(error))
-    logger.exception("Contour analysis failed")
+def _error_response(error: Exception, endpoint: str) -> HTTPException:
+    for kind, status in ((MapTooLargeError, 413), (ContourMapError, 400), (PondNotFoundError, 404)):
+        if isinstance(error, kind):
+            logger.warning("%s rejected with HTTP %d: %s", endpoint, status, error)
+            return HTTPException(status_code=status, detail=str(error))
+    logger.exception("%s failed unexpectedly", endpoint)
     return HTTPException(
         status_code=500,
         detail=f"The analysis failed unexpectedly ({type(error).__name__}: {error})."
@@ -187,6 +186,7 @@ def analyze_contour(
     """
 
     data = _read_upload(contour_map)
+    started = time.perf_counter()
 
     try:
         results = analyze_ponds(
@@ -194,12 +194,14 @@ def analyze_contour(
             resolution=5
         )
 
+        logger.info("analyzeContour: %d ponds found in a %.1f MB map (%.0f ms)",
+                    len(results), len(data) / 1e6, (time.perf_counter() - started) * 1000)
         return {
             "ponds": results
         }
 
     except Exception as e:
-        raise _error_response(e)
+        raise _error_response(e, "analyzeContour")
 
 # -------------------------
 # /findCatchment
@@ -295,6 +297,7 @@ def find_catchment_endpoint(
     """
 
     data = _read_upload(contour_map)
+    started = time.perf_counter()
 
     try:
         result = find_catchment(
@@ -303,10 +306,13 @@ def find_catchment_endpoint(
             resolution=5
         )
 
+        logger.info("findCatchment: pond %d drains %.1f ha and overflows at %.1f m (%.0f ms)",
+                    pond_id, result["catchment_area_ha"], result["spill"]["elevation_m"],
+                    (time.perf_counter() - started) * 1000)
         return {
             "pond_id": pond_id,
             **result
         }
 
     except Exception as e:
-        raise _error_response(e)
+        raise _error_response(e, "findCatchment")

@@ -24,6 +24,7 @@ on the same file does not rebuild it.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import threading
 import time
@@ -112,17 +113,27 @@ class _NoTelemetry:
 if _otel_trace is not None:
     _tracer = _otel_trace.get_tracer("pond.contour_analyzer")
     _meter = _otel_metrics.get_meter("pond.contour_analyzer")
+    # Bucket boundaries suited to these values; the SDK's defaults are meant
+    # for milliseconds and would put every build in the first bucket.
     _build_duration = _meter.create_histogram(
         "pond.terrain.build.duration", unit="s",
-        description="Time to build the terrain (elevation grid, ponds, flow routing) for one contour map")
+        description="Time to build the terrain (elevation grid, ponds, flow routing) for one contour map",
+        explicit_bucket_boundaries_advisory=[0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120])
     _grid_cells = _meter.create_histogram(
-        "pond.terrain.grid.cells", unit="{cell}", description="Cells in each elevation grid built")
+        "pond.terrain.grid.cells", unit="{cell}", description="Cells in each elevation grid built",
+        explicit_bucket_boundaries_advisory=[1e4, 5e4, 1e5, 2.5e5, 5e5, 1e6, 2e6, 4e6, 6e6])
     _cache_lookups = _meter.create_counter(
         "pond.terrain.cache.lookups", unit="{lookup}",
         description="Terrain cache lookups, by result: hit, miss, or shared (waited for another request's build)")
+    _meter.create_observable_gauge(
+        "pond.terrain.cache.size", unit="{map}",
+        callbacks=[lambda options: [_otel_metrics.Observation(len(_cache))]],
+        description="Contour maps whose terrain is cached in this process")
 else:  # pragma: no cover
     _tracer = None
     _build_duration = _grid_cells = _cache_lookups = _NoTelemetry()
+
+_log = logging.getLogger("pond.backend.analyzer")
 
 
 def _span(name: str, **attributes):
@@ -666,8 +677,12 @@ def _build_terrain(data: bytes, resolution: float) -> _Terrain:
         terrain = _build_terrain_stages(data, resolution)
         cells = terrain.basins.size
         build_span.set_attributes({"pond.grid.cells": cells, "pond.ponds.count": len(terrain.ponds)})
-    _build_duration.record(time.perf_counter() - started)
+    elapsed = time.perf_counter() - started
+    _build_duration.record(elapsed)
     _grid_cells.record(cells)
+    rows, cols = terrain.shape
+    _log.info("built terrain: %d x %d grid (%d cells), %d ponds, in %.2f s",
+              rows, cols, cells, len(terrain.ponds), elapsed)
     return terrain
 
 

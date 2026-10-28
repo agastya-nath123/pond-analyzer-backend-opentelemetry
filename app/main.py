@@ -1,3 +1,4 @@
+import logging
 import threading
 from contextlib import asynccontextmanager
 
@@ -9,7 +10,16 @@ from app.services.contour_analyzer import warm_up
 
 VERSION = "1.2.0"
 
-# Off unless OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_TRACES_EXPORTER is set; see
+# The backend's own log messages (logger names starting "pond"), shown in
+# the terminal and, with telemetry on, exported as OpenTelemetry logs.
+_pond_log = logging.getLogger("pond")
+_pond_log.setLevel(logging.INFO)
+if not _pond_log.handlers:
+    _console = logging.StreamHandler()
+    _console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    _pond_log.addHandler(_console)
+
+# Off unless OTEL_EXPORTER_OTLP_ENDPOINT or an OTEL_*_EXPORTER is set; see
 # app/telemetry.py. Each uvicorn worker process runs this once.
 telemetry.setup("pond-backend", VERSION)
 
